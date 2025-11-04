@@ -1,4 +1,4 @@
-# canoe-pyam-dashboard
+# CANOE pyam dashboard
 
 A Streamlit dashboard for comparing **pyam-IAMC-style** datasets across multiple files.  
 Filter by **Activity / Capacity / Emissions**, choose **Level-2** aggregation or **Level-3+ technology breakdown**, and visualize with pyam-standard chart types. Export the aggregated view as CSV.
@@ -58,3 +58,4 @@ This opens the dashboard in your browser (usually `http://localhost:8501`).
 5. Filter by **Model / Scenario / Region** and select which **Level-2** items to include.
 6. (For bar charts) choose the **single year**.
 7. **Download** the aggregated table as CSV if needed.
+
