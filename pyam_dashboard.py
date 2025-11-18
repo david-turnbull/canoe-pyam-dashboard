@@ -14,9 +14,6 @@
 #
 # Run: streamlit run streamlit_app.py
 #
-# Requirements:
-#   pip install streamlit pandas plotly pyam-iamc
-#
 # Notes:
 # - If your data is in "wide" years (e.g., 2025,2030,... as columns),
 #   this app melts to long format with columns: year,value.
@@ -33,7 +30,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-# Optional: try to import pyam for light validation (not required to run)
 try:
     import pyam  # type: ignore
     _HAS_PYAM = True
@@ -146,7 +142,11 @@ def aggregate(df: pd.DataFrame, category: str, filters: Dict, detail: str) -> pd
     grp_cols = ["dataset","Model","Scenario","Region","Unit","Year","Level2"]
 
     if detail == "Level3Plus":
+        # Keep only rows with a non-empty Level3Plus label
         use = use[use["Level3Plus"].fillna('').str.len() > 0]
+        # Optional filter on specific technologies
+        if filters.get("level3s"):
+            use = use[use["Level3Plus"].isin(filters["level3s"])]
         grp_cols.append("Level3Plus")
 
     g = (
@@ -221,6 +221,16 @@ with st.sidebar:
 
     facet_level2 = st.checkbox("Facet by Level-2 (columns) — only when showing technologies", value=False)
 
+    region_view = st.radio(
+        "Region comparison",
+        [
+            "Aggregate selected regions (sum)",
+            "Compare regions side-by-side",
+        ],
+        index=0,
+        help="Choose whether to sum all selected Regions together or show one panel per Region."
+    )
+
     st.markdown("---")
     st.caption("Tip: Use Level-3+ breakdown to see technology composition within each Level-2 category.")
 
@@ -268,10 +278,62 @@ with col3:
 level2_all = sorted(data.loc[data["Category"] == category, "Level2"].dropna().unique().tolist())
 level2_pick = st.multiselect("Level-2 selection", options=level2_all, default=level2_all)
 
-filters = dict(models=pick_models, scenarios=pick_scenarios, regions=pick_regions, level2s=level2_pick)
+# Optional technology (Level-3+) filter with search
+pick_level3 = None
+if detail.startswith("Level-3+"):
+    # All technologies within the chosen Category and Level-2 selection
+    level3_all = sorted(
+        data.loc[
+            (data["Category"] == category)
+            & (data["Level3Plus"].notna())
+            & (data["Level3Plus"] != "")
+            & (data["Level2"].isin(level2_pick)),
+            "Level3Plus",
+        ].unique().tolist()
+    )
+
+    if level3_all:
+        with st.expander("🔍 Technology filter (Level-3+)", expanded=False):
+            search_term = st.text_input(
+                "Search technologies (substring, case-insensitive)",
+                value="",
+                key="tech_search",
+            )
+            level3_options = level3_all
+            if search_term:
+                s = search_term.lower()
+                level3_options = [t for t in level3_all if s in t.lower()]
+                if not level3_options:
+                    st.info("No technologies match this search; showing full list.")
+                    level3_options = level3_all
+
+            pick_level3 = st.multiselect(
+                "Select technologies",
+                options=level3_options,
+                default=level3_options,
+                help="Hold Ctrl/Cmd to select multiple technologies.",
+            )
+
+# Filters passed to the aggregation step
+filters = dict(
+    models=pick_models,
+    scenarios=pick_scenarios,
+    regions=pick_regions,
+    level2s=level2_pick,
+    level3s=pick_level3,
+)
 
 detail_key = "Level3Plus" if detail.startswith("Level-3+") else "Level2"
 agg = aggregate(data, category=category, filters=filters, detail=detail_key)
+
+# Optionally aggregate across Regions into a single total
+if region_view.startswith("Aggregate"):
+    group_cols_no_region = [c for c in agg.columns if c not in ("Region", "Value")]
+    agg = (
+        agg.groupby(group_cols_no_region, dropna=False)["Value"]
+        .sum()
+        .reset_index()
+    )
 
 # Warn if units inconsistent
 warn = _unit_warning(agg)
@@ -312,12 +374,21 @@ color_dim = "Level2" if detail_key == "Level2" else "Level3Plus"
 
 # Facet behavior
 facet_col = None
-if overlay_mode == "Facet by dataset":
-    facet_col = "dataset"
-elif detail_key == "Level3Plus" and facet_level2:
-    facet_col = "Level2"
+facet_row = None
 
-hover_data = ["dataset","Unit","Model","Scenario","Region","Level2"]
+# When comparing Regions, show one panel per Region
+if region_view == "Compare regions side-by-side" and "Region" in agg_view.columns:
+    facet_col = "Region"
+# Otherwise, fall back to dataset/Level-2 faceting
+else:
+    if overlay_mode == "Facet by dataset":
+        facet_col = "dataset"
+    elif detail_key == "Level3Plus" and facet_level2:
+        facet_col = "Level2"
+
+hover_data = ["dataset","Unit","Model","Scenario","Level2"]
+if "Region" in agg_view.columns:
+    hover_data.append("Region")
 if "Level3Plus" in agg_view.columns:
     hover_data.append("Level3Plus")
 
@@ -333,7 +404,7 @@ px_labels = {"Value": y_axis_label, "Year": "Year", "Level2": "Level-2", "Level3
 # Plot
 if chart_type == "Stacked Area (time)":
     fig = px.area(
-        agg_view, x="Year", y="Value", color=color_dim, facet_col=facet_col,
+        agg_view, x="Year", y="Value", color=color_dim, facet_col=facet_col, facet_row=facet_row,
         line_group="dataset" if overlay_mode == "Overlay (datasets as separate traces)" else None,
         hover_data=hover_data, markers=False, labels=px_labels, title=title
     )
@@ -342,7 +413,7 @@ if chart_type == "Stacked Area (time)":
 
 elif chart_type == "Line (time)":
     fig = px.line(
-        agg_view, x="Year", y="Value", color=color_dim, facet_col=facet_col,
+        agg_view, x="Year", y="Value", color=color_dim, facet_col=facet_col, facet_row=facet_row,
         line_dash="dataset" if overlay_mode == "Overlay (datasets as separate traces)" else None,
         hover_data=hover_data, markers=True, labels=px_labels, title=title
     )
@@ -353,7 +424,7 @@ elif chart_type == "Stacked Bar (single year)":
     # Always show Level-2 on x; stack Level3Plus if in breakdown mode
     bar_color = color_dim if detail_key == "Level3Plus" else (color_dim if overlay_mode=="Stack within dataset" else "dataset")
     fig = px.bar(
-        agg_view, x="Level2", y="Value", color=bar_color, facet_col=facet_col,
+        agg_view, x="Level2", y="Value", color=bar_color, facet_col=facet_col, facet_row=facet_row,
         hover_data=hover_data, barmode="relative", labels=px_labels, title=title
     )
     fig.update_layout(title={'text': f"{title}<br><sup>{subtitle}</sup>"})
@@ -363,7 +434,7 @@ elif chart_type == "Grouped Bar (single year)":
     # Grouped by Level2; color by dataset for overlay, otherwise by color_dim
     bar_color = "dataset" if overlay_mode != "Stack within dataset" else color_dim
     fig = px.bar(
-        agg_view, x="Level2", y="Value", color=bar_color, facet_col=facet_col,
+        agg_view, x="Level2", y="Value", color=bar_color, facet_col=facet_col, facet_row=facet_row,
         hover_data=hover_data, barmode="group", labels=px_labels, title=title
     )
     fig.update_layout(title={'text': f"{title}<br><sup>{subtitle}</sup>"})
