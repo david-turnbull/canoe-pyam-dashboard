@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 ### 3) Run the app
 ```bash
-streamlit run streamlit_app.py
+streamlit run pyam_dashboard.py
 ```
 This opens the dashboard in your browser (usually `http://localhost:8501`).
 
@@ -58,4 +58,5 @@ This opens the dashboard in your browser (usually `http://localhost:8501`).
 5. Filter by **Model / Scenario / Region** and select which **Level-2** items to include.
 6. (For bar charts) choose the **single year**.
 7. **Download** the aggregated table as CSV if needed.
+
 
